@@ -1,0 +1,20 @@
+data/raw/
+data/processed/
+*.jpg
+*.jpeg
+*.png
+
+# Model weights
+models/*.h5
+models/*.keras
+*.weights.h5
+
+# OS files
+.DS_Store
+__pycache__/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# W&B local logs
+wandb/
