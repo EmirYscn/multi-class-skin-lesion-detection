@@ -1,0 +1,9 @@
+{
+  "best_experiment_index": 2,
+  "best_experiment_name": "exp2_resnet50_mixup_cutmix",
+  "best_strategy": "MixUp + CutMix",
+  "builder_function": "build_dataset_mixup_cutmix",
+  "macro_f1": 0.6936744668563353,
+  "mel_recall": 0.4774774774774775,
+  "use_class_weights": false
+}
