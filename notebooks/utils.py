@@ -205,6 +205,56 @@ def build_resnet50(num_classes=NUM_CLASSES, dropout=DROPOUT):
           f"Total params: {model.count_params():,}")
     return model, base_model
 
+def build_efficientnetb0(num_classes=NUM_CLASSES, dropout=DROPOUT):
+    """
+    EfficientNet-B0 + custom head: GlobalAvgPool → Dense(256) → Dropout → Dense(7, softmax).
+    Compound scaling: balances depth, width, and resolution for high efficiency.
+    Returns (model, base_model) with base FROZEN for Phase A.
+    """
+    base_model = tf.keras.applications.EfficientNetB0(
+        weights='imagenet', include_top=False, input_shape=(224, 224, 3)
+    )
+    base_model.trainable = False
+ 
+    inputs = tf.keras.Input(shape=(224, 224, 3))
+    # EfficientNet has built-in preprocessing (scales to [0, 255] and normalizes internally)
+    x = tf.keras.applications.efficientnet.preprocess_input(inputs * 255.0)
+    x = base_model(x, training=False)
+    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    x = tf.keras.layers.Dense(256, activation='relu')(x)
+    x = tf.keras.layers.Dropout(dropout)(x)
+    outputs = tf.keras.layers.Dense(num_classes, activation='softmax')(x)
+ 
+    model = tf.keras.Model(inputs, outputs, name="EfficientNetB0_SkinLesion")
+    print(f"EfficientNet-B0 built. Base layers: {len(base_model.layers)}, "
+          f"Total params: {model.count_params():,}")
+    return model, base_model
+
+def build_mobilenetv2(num_classes=NUM_CLASSES, dropout=DROPOUT):
+    """
+    MobileNetV2 + custom head: GlobalAvgPool → Dense(256) → Dropout → Dense(7, softmax).
+    Lightweight architecture designed for mobile/edge deployment.
+    Returns (model, base_model) with base FROZEN for Phase A.
+    """
+    base_model = tf.keras.applications.MobileNetV2(
+        weights='imagenet', include_top=False, input_shape=(224, 224, 3)
+    )
+    base_model.trainable = False
+ 
+    inputs = tf.keras.Input(shape=(224, 224, 3))
+    # MobileNetV2 preprocessing: scales pixels to [-1, 1]
+    x = tf.keras.applications.mobilenet_v2.preprocess_input(inputs * 255.0)
+    x = base_model(x, training=False)
+    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    x = tf.keras.layers.Dense(256, activation='relu')(x)
+    x = tf.keras.layers.Dropout(dropout)(x)
+    outputs = tf.keras.layers.Dense(num_classes, activation='softmax')(x)
+ 
+    model = tf.keras.Model(inputs, outputs, name="MobileNetV2_SkinLesion")
+    print(f"MobileNetV2 built. Base layers: {len(base_model.layers)}, "
+          f"Total params: {model.count_params():,}")
+    return model, base_model
+
 
 # =============================================================================
 # TRAINING UTILITIES
@@ -219,20 +269,37 @@ def compile_for_phase_a(model, lr=PHASE_A_LR):
     )
     return model
 
-
-def unfreeze_for_phase_b(model, base_model, lr=PHASE_B_LR, unfreeze_pct=0.30):
-    """Unfreeze top N% of base layers and re-compile with low learning rate."""
+def unfreeze_for_phase_b(model, base_model, lr=PHASE_B_LR, unfreeze_pct=0.30,
+                         freeze_bn=False):
+    """
+    Unfreeze top N% of base layers and re-compile with low learning rate.
+    
+    Args:
+        freeze_bn: If True, keep all BatchNormalization layers frozen even in the
+                   unfrozen region. Critical for EfficientNet and MobileNetV2 which
+                   are sensitive to BN statistic shifts during fine-tuning.
+    """
     base_model.trainable = True
     total_layers = len(base_model.layers)
     freeze_until = int(total_layers * (1.0 - unfreeze_pct))
-
+ 
     for layer in base_model.layers[:freeze_until]:
         layer.trainable = False
-
+ 
+    # Optionally freeze all BatchNormalization layers in the unfrozen region
+    bn_frozen_count = 0
+    if freeze_bn:
+        for layer in base_model.layers[freeze_until:]:
+            if isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = False
+                bn_frozen_count += 1
+ 
     trainable_count = sum(1 for l in base_model.layers if l.trainable)
     print(f"Fine-tuning: unfreezing top {trainable_count}/{total_layers} layers "
           f"({unfreeze_pct*100:.0f}%)")
-
+    if freeze_bn:
+        print(f"  BatchNorm layers kept frozen: {bn_frozen_count}")
+ 
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
         loss='categorical_crossentropy',
@@ -413,10 +480,11 @@ def plot_training_history(history_a, history_b, experiment_name):
 
 def run_experiment(experiment_name, train_ds, val_ds, test_ds,
                    build_model_fn, class_weights, use_class_weights=True,
-                   architecture_name="ResNet50"):
+                   architecture_name="ResNet50",
+                   unfreeze_pct=0.30, freeze_bn=False):
     """
     Run a complete 2-phase training experiment with W&B logging and full evaluation.
-
+ 
     Args:
         experiment_name: e.g. "exp0_resnet50_no_aug"
         train_ds: training dataset (batched, prefetched)
@@ -426,7 +494,9 @@ def run_experiment(experiment_name, train_ds, val_ds, test_ds,
         class_weights: dict for class_weight parameter
         use_class_weights: True for hard labels, False for soft labels (MixUp/CutMix)
         architecture_name: for W&B config logging
-
+        unfreeze_pct: fraction of base layers to unfreeze in Phase B (default 0.30)
+        freeze_bn: if True, keep BatchNorm layers frozen during Phase B
+ 
     Returns:
         model: trained model
         summary: evaluation results dict
@@ -434,7 +504,7 @@ def run_experiment(experiment_name, train_ds, val_ds, test_ds,
     print(f"\n{'#'*60}")
     print(f"  EXPERIMENT: {experiment_name}")
     print(f"{'#'*60}\n")
-
+ 
     # Initialize W&B
     wandb.init(
         project="ham10000-capstone",
@@ -446,46 +516,49 @@ def run_experiment(experiment_name, train_ds, val_ds, test_ds,
             "batch_size": BATCH_SIZE, "dropout": DROPOUT,
             "patience": PATIENCE, "img_size": IMG_SIZE[0],
             "class_weights": use_class_weights,
+            "unfreeze_pct": unfreeze_pct,
+            "freeze_bn": freeze_bn,
         }
     )
-
+ 
     # Build Model
     model, base_model = build_model_fn()
-
+ 
     # PHASE A: Feature Extraction (Frozen Base)
     print("\n--- PHASE A: Feature Extraction (Frozen Base) ---")
     model = compile_for_phase_a(model, lr=PHASE_A_LR)
     cw = class_weights if use_class_weights else None
-
+ 
     history_a = model.fit(
         train_ds, validation_data=val_ds,
         epochs=PHASE_A_EPOCHS, class_weight=cw,
         callbacks=get_callbacks(experiment_name, "phaseA") + [WandbMetricsLogger()],
         verbose=1
     )
-
-    # PHASE B: Fine-Tuning (Top 30% Unfrozen)
-    print("\n--- PHASE B: Fine-Tuning (Top 30% Unfrozen) ---")
-    model = unfreeze_for_phase_b(model, base_model, lr=PHASE_B_LR, unfreeze_pct=0.30)
-
+ 
+    # PHASE B: Fine-Tuning
+    print(f"\n--- PHASE B: Fine-Tuning (Top {int(unfreeze_pct*100)}% Unfrozen, freeze_bn={freeze_bn}) ---")
+    model = unfreeze_for_phase_b(model, base_model, lr=PHASE_B_LR,
+                                  unfreeze_pct=unfreeze_pct, freeze_bn=freeze_bn)
+ 
     history_b = model.fit(
         train_ds, validation_data=val_ds,
         epochs=PHASE_B_EPOCHS, class_weight=cw,
         callbacks=get_callbacks(experiment_name, "phaseB") + [WandbMetricsLogger()],
         verbose=1
     )
-
+ 
     # Plot Training Curves
     plot_training_history(history_a, history_b, experiment_name)
-
+ 
     # Save Final Model
     model_path = os.path.join(MODELS_DIR, f"{experiment_name}_final.keras")
     model.save(model_path)
     print(f"\nModel saved to: {model_path}")
-
+ 
     # Full Evaluation on Test Set
     summary = evaluate_model(model, test_ds, experiment_name)
-
+ 
     # Log key metrics to W&B
     wandb.log({
         "test/accuracy": summary['accuracy'],
@@ -495,12 +568,12 @@ def run_experiment(experiment_name, train_ds, val_ds, test_ds,
         "test/mel_recall": summary['mel_recall'],
         "test/mel_f1": summary['mel_f1'],
     })
-
+ 
     wandb.finish()
     print(f"\n{'='*60}")
     print(f"  {experiment_name} COMPLETE")
     print(f"{'='*60}\n")
-
+ 
     return model, summary
 
 

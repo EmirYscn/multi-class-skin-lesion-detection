@@ -1,0 +1,8 @@
+{
+  "best_by_macro_f1": "exp2_resnet50_mixup_cutmix",
+  "best_by_mel_recall": "exp1_resnet50_basic_aug",
+  "selected_for_gradcam": "exp1_resnet50_basic_aug",
+  "macro_f1": 0.6886658073584356,
+  "mel_recall": 0.8018018018018018,
+  "mean_auc": 0.9545160932548932
+}

@@ -1,0 +1,7 @@
+Experiment,Accuracy,Macro F1,Macro Recall,Mean AUC,Mel Recall,Mel F1
+exp1_resnet50_basic_aug,0.7715,0.6887,0.7397,0.9545,0.8018,0.5914
+exp2_resnet50_mixup_cutmix,0.8313,0.6937,0.6465,0.9635,0.4775,0.5521
+exp4a_v2_efficientnetb0_basic_aug,0.6617,0.5622,0.6264,0.9270,0.6396,0.3934
+exp4b_v2_efficientnetb0_mixup_cutmix,0.7794,0.5734,0.5279,0.9406,0.3964,0.4422
+exp5a_v2_mobilenetv2_basic_aug,0.6916,0.5405,0.6131,0.9176,0.5586,0.4542
+exp5b_v2_mobilenetv2_mixup_cutmix,0.7595,0.4582,0.4273,0.9303,0.1441,0.2148

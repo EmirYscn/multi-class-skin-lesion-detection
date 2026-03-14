@@ -1,0 +1,7 @@
+Architecture,Augmentation,Fine-Tuning,Accuracy,Macro F1,Mel Recall,Mean AUC
+ResNet50,Traditional Aug,30% unfreeze,0.7715,0.6887,0.8018,0.9545
+ResNet50,MixUp/CutMix,30% unfreeze,0.8313,0.6937,0.4775,0.9635
+EfficientNet-B0,Traditional Aug,10% + frozen BN,0.6617,0.5622,0.6396,0.9270
+EfficientNet-B0,MixUp/CutMix,10% + frozen BN,0.7794,0.5734,0.3964,0.9406
+MobileNetV2,Traditional Aug,10% + frozen BN,0.6916,0.5405,0.5586,0.9176
+MobileNetV2,MixUp/CutMix,10% + frozen BN,0.7595,0.4582,0.1441,0.9303
